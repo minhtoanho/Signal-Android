@@ -38,6 +38,9 @@ This wiki follows the **C4 Model** for architectural documentation, providing vi
 | [Module Structure](Module-Structure.md) | Understanding the modular architecture |
 | [Database](Database.md) | Database layer documentation |
 | [Security & Cryptography](Security-Cryptography.md) | Security implementation details |
+| [Signal Protocol Integration Guide](Signal-Protocol-Integration-Guide.md) | **How to integrate Signal Protocol into your app** |
+| [Signal Protocol Messaging](Signal-Protocol-Messaging.md) | Session handshake, encryption, decryption, retry flows |
+| [Master Key Flow](Master-Key-Flow.md) | Key management: MasterSecret & MasterKey (SVR2) |
 | [Building](Building.md) | How to build the project |
 | [Testing](Testing.md) | Testing guidelines |
 | [Code Style Guidelines](Code-Style-Guidelines.md) | Coding conventions |
