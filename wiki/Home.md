@@ -40,6 +40,7 @@ This wiki follows the **C4 Model** for architectural documentation, providing vi
 | [Security & Cryptography](Security-Cryptography.md) | Security implementation details |
 | [Signal Protocol Integration Guide](Signal-Protocol-Integration-Guide.md) | **How to integrate Signal Protocol into your app** |
 | [Signal Protocol Messaging](Signal-Protocol-Messaging.md) | Session handshake, encryption, decryption, retry flows |
+| [Signal Protocol Code Level](Signal-Protocol-Code-Level.md) | **C4 Level 4: Deep dive into classes, methods, algorithms** |
 | [Master Key Flow](Master-Key-Flow.md) | Key management: MasterSecret & MasterKey (SVR2) |
 | [Building](Building.md) | How to build the project |
 | [Testing](Testing.md) | Testing guidelines |
