@@ -38,6 +38,7 @@ This wiki follows the **C4 Model** for architectural documentation, providing vi
 | [Module Structure](Module-Structure.md) | Understanding the modular architecture |
 | [Database](Database.md) | Database layer documentation |
 | [Job System](Job-System.md) | Background job management and scheduling |
+| [Background Tasks](Background-Tasks.md) | Periodic tasks, foreground services, keep-alive mechanisms |
 | [Media Lifecycle](Media-Lifecycle.md) | Attachment download, upload, retention, and storage |
 | [Security & Cryptography](Security-Cryptography.md) | Security implementation details |
 | [Signal Protocol Integration Guide](Signal-Protocol-Integration-Guide.md) | **How to integrate Signal Protocol into your app** |
