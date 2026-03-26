@@ -47,6 +47,7 @@ import org.thoughtcrime.securesms.database.model.databaseprotos.MessageExtras
 import org.thoughtcrime.securesms.database.model.databaseprotos.PinnedMessage
 import org.thoughtcrime.securesms.database.model.databaseprotos.PollTerminate
 import org.thoughtcrime.securesms.database.model.toBodyRangeList
+import org.thoughtcrime.securesms.database.withAttachments
 import org.thoughtcrime.securesms.dependencies.AppDependencies
 import org.thoughtcrime.securesms.groups.BadGroupIdException
 import org.thoughtcrime.securesms.groups.GroupAccessControl
@@ -458,7 +459,7 @@ object DataMessageProcessor {
         if (groupId != null) {
           parentStoryId = GroupReply(storyId)
         } else if (SignalDatabase.storySends.canReply(senderRecipientId, sentTimestamp)) {
-          val story = SignalDatabase.messages.getMessageRecord(storyId) as MmsMessageRecord
+          val story = SignalDatabase.messages.getMessageRecord(storyId).withAttachments() as MmsMessageRecord
           var displayText = ""
           var bodyRanges: BodyRangeList? = null
 
@@ -771,7 +772,7 @@ object DataMessageProcessor {
           storyMessageId = SignalDatabase.messages.getStoryId(storyAuthorRecipientId, sentTimestamp)
         }
 
-        val story: MmsMessageRecord = SignalDatabase.messages.getMessageRecord(storyMessageId.id) as MmsMessageRecord
+        val story: MmsMessageRecord = SignalDatabase.messages.getMessageRecord(storyMessageId.id).withAttachments() as MmsMessageRecord
         var threadRecipient: Recipient = SignalDatabase.threads.getRecipientForThreadId(story.threadId)!!
         val groupRecord: GroupRecord? = SignalDatabase.groups.getGroup(threadRecipient.id).orNull()
         val groupStory: Boolean = groupRecord?.isActive ?: false
@@ -1272,11 +1273,6 @@ object DataMessageProcessor {
     receivedTime: Long,
     earlyMessageCacheEntry: EarlyMessageCacheEntry? = null
   ): InsertResult? {
-    if (!RemoteConfig.receivePinnedMessages) {
-      log(envelope.timestamp!!, "Pinned message not allowed due to remote config.")
-      return null
-    }
-
     val pinMessage = message.pinMessage!!
     log(envelope.timestamp!!, "[handlePinMessage] Pin message for " + pinMessage.targetSentTimestamp)
 
@@ -1313,6 +1309,11 @@ object DataMessageProcessor {
     val targetThread = SignalDatabase.threads.getThreadRecord(targetMessage.threadId)
     if (targetThread == null) {
       warn(envelope.timestamp!!, "[handlePinMessage] Could not find a thread for the message! timestamp: ${pinMessage.targetSentTimestamp}")
+      return null
+    }
+
+    if (targetThread.recipient.id != threadRecipient.id) {
+      warn(envelope.timestamp!!, "[handlePinMessage] Target message is in a different thread than the thread recipient! timestamp: ${pinMessage.targetSentTimestamp}")
       return null
     }
 
@@ -1366,11 +1367,6 @@ object DataMessageProcessor {
     threadRecipient: Recipient,
     earlyMessageCacheEntry: EarlyMessageCacheEntry? = null
   ): MessageId? {
-    if (!RemoteConfig.receivePinnedMessages) {
-      log(envelope.timestamp!!, "Unpinning message is not allowed due to remote config.")
-      return null
-    }
-
     val unpinMessage = message.unpinMessage!!
     log(envelope.timestamp!!, "[handleUnpinMessage] Unpin message for ${unpinMessage.targetSentTimestamp}")
 
@@ -1405,6 +1401,11 @@ object DataMessageProcessor {
     val targetThread = SignalDatabase.threads.getThreadRecord(targetMessage.threadId)
     if (targetThread == null) {
       warn(envelope.timestamp!!, "[handleUnpinMessage] Could not find a thread for the message! timestamp: ${unpinMessage.targetSentTimestamp}")
+      return null
+    }
+
+    if (targetThread.recipient.id != threadRecipient.id) {
+      warn(envelope.timestamp!!, "[handleUnpinMessage] Target message is in a different thread than the thread recipient! timestamp: ${unpinMessage.targetSentTimestamp}")
       return null
     }
 

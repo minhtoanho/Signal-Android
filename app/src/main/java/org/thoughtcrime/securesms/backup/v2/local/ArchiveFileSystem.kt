@@ -8,7 +8,14 @@ package org.thoughtcrime.securesms.backup.v2.local
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runBlocking
+import org.signal.archive.local.ArchivedFilesReader
 import org.signal.core.models.backup.MediaName
+import org.signal.core.util.Stopwatch
 import org.signal.core.util.androidx.DocumentFileInfo
 import org.signal.core.util.androidx.DocumentFileUtil.delete
 import org.signal.core.util.androidx.DocumentFileUtil.hasFile
@@ -19,6 +26,7 @@ import org.signal.core.util.androidx.DocumentFileUtil.newFile
 import org.signal.core.util.androidx.DocumentFileUtil.outputStream
 import org.signal.core.util.androidx.DocumentFileUtil.renameTo
 import org.signal.core.util.logging.Log
+import org.thoughtcrime.securesms.R
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -27,12 +35,15 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Provide a domain-specific interface to the root file system backing a local directory based archive.
  */
 @Suppress("JoinDeclarationAndAssignment")
-class ArchiveFileSystem private constructor(private val context: Context, root: DocumentFile) {
+class ArchiveFileSystem private constructor(private val context: Context, root: DocumentFile, readOnly: Boolean = false) {
 
   companion object {
     val TAG = Log.tag(ArchiveFileSystem::class.java)
@@ -42,7 +53,8 @@ class ArchiveFileSystem private constructor(private val context: Context, root: 
     const val TEMP_BACKUP_DIRECTORY_SUFFIX: String = "tmp"
 
     /**
-     * Attempt to create an [ArchiveFileSystem] from a tree [Uri].
+     * Attempt to create an [ArchiveFileSystem] from a tree [Uri], creating the necessary directory
+     * structure if it does not already exist. Use this when writing backups.
      *
      * Should likely only be called on API29+
      */
@@ -53,7 +65,25 @@ class ArchiveFileSystem private constructor(private val context: Context, root: 
         return null
       }
 
-      return ArchiveFileSystem(context, root)
+      return ArchiveFileSystem(context, root, readOnly = false)
+    }
+
+    /**
+     * Attempt to open an existing [ArchiveFileSystem] from a tree [Uri] without creating any
+     * directories or files. Use this when reading/restoring backups.
+     *
+     * Should likely only be called on API29+
+     */
+    fun openForRestore(context: Context, uri: Uri): ArchiveFileSystem? {
+      val root = DocumentFile.fromTreeUri(context, uri) ?: return null
+      if (!root.canRead()) return null
+      if (root.findFile(MAIN_DIRECTORY_NAME) == null) return null
+      return try {
+        ArchiveFileSystem(context, root, readOnly = true)
+      } catch (e: IOException) {
+        Log.w(TAG, "Unable to open backup directory for restore: $uri", e)
+        null
+      }
     }
 
     /**
@@ -62,7 +92,7 @@ class ArchiveFileSystem private constructor(private val context: Context, root: 
      * Should likely only be called on < API29.
      */
     fun fromFile(context: Context, backupDirectory: File): ArchiveFileSystem {
-      return ArchiveFileSystem(context, DocumentFile.fromFile(backupDirectory))
+      return ArchiveFileSystem(context, DocumentFile.fromFile(backupDirectory), readOnly = false)
     }
 
     fun openInputStream(context: Context, uri: Uri): InputStream? {
@@ -76,9 +106,22 @@ class ArchiveFileSystem private constructor(private val context: Context, root: 
   val filesFileSystem: FilesFileSystem
 
   init {
-    signalBackups = root.mkdirp(MAIN_DIRECTORY_NAME) ?: throw IOException("Unable to create main backups directory")
-    val filesDirectory = signalBackups.mkdirp("files") ?: throw IOException("Unable to create files directory")
-    filesFileSystem = FilesFileSystem(context, filesDirectory)
+    if (readOnly) {
+      signalBackups = root.findFile(MAIN_DIRECTORY_NAME) ?: throw IOException("SignalBackups directory not found in $root")
+      val filesDirectory = signalBackups.findFile("files") ?: throw IOException("files directory not found in $signalBackups")
+      filesFileSystem = FilesFileSystem(context, filesDirectory, readOnly = true)
+    } else {
+      signalBackups = root.mkdirp(MAIN_DIRECTORY_NAME) ?: throw IOException("Unable to create main backups directory")
+      val filesDirectory = signalBackups.mkdirp("files") ?: throw IOException("Unable to create files directory")
+      filesFileSystem = FilesFileSystem(context, filesDirectory)
+
+      val hintFileName = context.getString(R.string.ArchiveFileSystem__select_this_folder_hint_name)
+      if (!root.hasFile(hintFileName)) {
+        root.createFile("text/plain", hintFileName)
+          ?.outputStream(context)
+          ?.use { out -> out.write(context.getString(R.string.ArchiveFileSystem__select_this_folder_hint_body).toByteArray()) }
+      }
+    }
   }
 
   /**
@@ -115,7 +158,7 @@ class ArchiveFileSystem private constructor(private val context: Context, root: 
    * Attempt to create a [SnapshotFileSystem] to represent a single backup snapshot.
    */
   fun createSnapshot(): SnapshotFileSystem? {
-    val timestamp = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.US).format(Date())
+    val timestamp = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
     val snapshotDirectoryName = "${BACKUP_DIRECTORY_PREFIX}-$timestamp"
 
     if (signalBackups.hasFile(snapshotDirectoryName)) {
@@ -161,10 +204,10 @@ class ArchiveFileSystem private constructor(private val context: Context, root: 
    * Clean up unused files in the shared files directory leveraged across all current snapshots. A file
    * is unused if it is not referenced directly by any current snapshots.
    */
-  fun deleteUnusedFiles() {
+  fun deleteUnusedFiles(allFilesProgressListener: AllFilesProgressListener? = null) {
     Log.i(TAG, "Deleting unused files")
 
-    val allFiles: MutableMap<String, DocumentFileInfo> = filesFileSystem.allFiles().toMutableMap()
+    val allFiles: MutableMap<String, DocumentFileInfo> = filesFileSystem.allFiles(allFilesProgressListener).toMutableMap()
     val snapshots: List<SnapshotInfo> = listSnapshots()
 
     snapshots
@@ -249,7 +292,11 @@ class SnapshotFileSystem(private val context: Context, private val snapshotDirec
 /**
  * Domain specific file system access for accessing backup files (e.g., attachments, media, etc.).
  */
-class FilesFileSystem(private val context: Context, private val root: DocumentFile) {
+class FilesFileSystem(private val context: Context, private val root: DocumentFile, readOnly: Boolean = false) {
+
+  companion object {
+    private val TAG = Log.tag(FilesFileSystem::class.java)
+  }
 
   private val subFolders: Map<String, DocumentFile>
 
@@ -258,24 +305,51 @@ class FilesFileSystem(private val context: Context, private val root: DocumentFi
       .mapNotNull { f -> f.name?.let { name -> name to f } }
       .toMap()
 
-    subFolders = (0..255)
-      .map { i -> i.toString(16).padStart(2, '0') }
-      .associateWith { name ->
-        existingFolders[name] ?: root.createDirectory(name)!!
-      }
+    subFolders = if (readOnly) {
+      existingFolders
+    } else {
+      (0..255)
+        .map { i -> i.toString(16).padStart(2, '0') }
+        .associateWith { name ->
+          existingFolders[name] ?: root.createDirectory(name)!!
+        }
+    }
   }
 
   /**
    * Enumerate all files in the directory.
    */
-  fun allFiles(): Map<String, DocumentFileInfo> {
-    val allFiles = HashMap<String, DocumentFileInfo>()
+  fun allFiles(allFilesProgressListener: AllFilesProgressListener? = null): Map<String, DocumentFileInfo> {
+    val stopwatch = Stopwatch("allFiles")
 
-    for (subfolder in subFolders.values) {
-      val subFiles = subfolder.listFiles(context)
-      for (file in subFiles) {
-        allFiles[file.name] = file
-      }
+    val asyncResult = runBlocking { allFilesAsync(allFilesProgressListener) }
+    stopwatch.split("async")
+    stopwatch.stop(TAG)
+
+    return asyncResult
+  }
+
+  private suspend fun allFilesAsync(allFilesProgressListener: AllFilesProgressListener? = null, batchCount: Int = Runtime.getRuntime().availableProcessors()): Map<String, DocumentFileInfo> {
+    val allFiles = ConcurrentHashMap<String, DocumentFileInfo>()
+    val total = subFolders.values.size
+    val completed = AtomicInteger(0)
+    val chunkSize = (total + batchCount - 1) / batchCount
+
+    Log.d(TAG, "allFilesAsync: $batchCount")
+
+    coroutineScope {
+      subFolders.values.chunked(chunkSize).map { chunk ->
+        async(Dispatchers.IO) {
+          for (subfolder in chunk) {
+            val subFiles = subfolder.listFiles(context)
+            for (file in subFiles) {
+              allFiles[file.name] = file
+            }
+
+            allFilesProgressListener?.onProgress(completed.incrementAndGet(), total)
+          }
+        }
+      }.awaitAll()
     }
 
     return allFiles
@@ -313,7 +387,7 @@ private fun String.toMilliseconds(): Long {
 
   if (parts.size == 7) {
     try {
-      val calendar = Calendar.getInstance(Locale.US)
+      val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"), Locale.US)
       calendar[Calendar.YEAR] = parts[1].toInt()
       calendar[Calendar.MONTH] = parts[2].toInt() - 1
       calendar[Calendar.DAY_OF_MONTH] = parts[3].toInt()
@@ -329,4 +403,8 @@ private fun String.toMilliseconds(): Long {
   }
 
   return -1
+}
+
+fun interface AllFilesProgressListener {
+  fun onProgress(completed: Int, total: Int)
 }

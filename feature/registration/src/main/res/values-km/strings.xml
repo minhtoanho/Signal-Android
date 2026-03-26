@@ -94,4 +94,40 @@
     <string name="WelcomeFragment_restore_action_i_dont_have_my_old_phone">ខ្ញុំមិនមានទូរសព្ទចាស់ទេ</string>
     <!-- Row subtitle for restore/transfer without using a previous device -->
     <string name="WelcomeFragment_restore_action_reinstalling">ឬអ្នកកំពុងដំឡើង Signal ឡើងវិញនៅលើឧបករណ៍តែមួយ</string>
+
+    <!-- ArchiveRestoreSelectionScreen -->
+    <!-- Title text for the archive restore selection screen -->
+    <string name="ArchiveRestoreSelectionScreen__restore_or_transfer_account">ស្តារ ឬផ្ទេរគណនី</string>
+    <!-- Subtitle text for the archive restore selection screen -->
+    <string name="ArchiveRestoreSelectionScreen__subheading">ជ្រើសរើសរបៀបដែលអ្នកចង់ស្តារប្រវត្តិសារ និងទិន្នន័យគណនីរបស់អ្នក។</string>
+    <!-- Title for the Signal Backups option card -->
+    <string name="ArchiveRestoreSelectionScreen__from_signal_backups">ពីការបម្រុងទុក Signal</string>
+    <!-- Subtitle for the Signal Backups option card -->
+    <string name="ArchiveRestoreSelectionScreen__your_free_or_paid_signal_backup_plan">គម្រោងបម្រុងទុក Signal ឥតគិតថ្លៃ ឬបង់ប្រាក់របស់អ្នក</string>
+    <!-- Title for an option that, when clicked, will take the user to a flow to restore form a local backup -->
+    <string name="ArchiveRestoreSelectionScreen__local_backup_card_title">ស្ដារការបម្រុងទុកនៅលើឧបករណ៍</string>
+    <!-- Description for an option that, when clicked, will take the user to a flow to restore form a local backup -->
+    <string name="ArchiveRestoreSelectionScreen__local_backup_card_description">ស្ដារសាររបស់អ្នកពីការបម្រុងទុកដែលអ្នកបានរក្សាទុកនៅលើឧបករណ៍របស់អ្នក។</string>
+    <!-- Title for an option that, when clicked, will take the user to a flow to restore form a local backup -->
+    <string name="ArchiveRestoreSelectionScreen__skip_restore_title">បន្តដោយមិនចាំបាច់ផ្ទេរ</string>
+    <!-- Description for an option that, when clicked, will take the user to a flow to restore form a local backup -->
+    <string name="ArchiveRestoreSelectionScreen__skip_restore_description">សារ និងមេឌៀនឹងមិនត្រូវបានផ្ទេរទេ</string>
+    <!-- Title for the backup folder option card (V2 format) -->
+    <string name="ArchiveRestoreSelectionScreen__from_a_backup_folder">ពីថតឯកសារបម្រុងទុក</string>
+    <!-- Title for the backup file option card (V1 legacy format) -->
+    <string name="ArchiveRestoreSelectionScreen__from_a_backup_file">ពីឯកសារបម្រុងទុក</string>
+    <!-- Subtitle for the backup folder/file option cards -->
+    <string name="ArchiveRestoreSelectionScreen__choose_a_backup_youve_saved">ជ្រើសរើសការបម្រុងទុកដែលអ្នកបានរក្សាទុក</string>
+    <!-- Title for the device transfer option card -->
+    <string name="ArchiveRestoreSelectionScreen__from_your_old_phone">ពីទូរសព្ទចាស់របស់អ្នក</string>
+    <!-- Subtitle for the device transfer option card -->
+    <string name="ArchiveRestoreSelectionScreen__transfer_directly_from_old">ផ្ទេរដោយផ្ទាល់ពីឧបករណ៍ Android ចាស់របស់អ្នក</string>
+    <!-- Skip button text -->
+    <string name="ArchiveRestoreSelectionScreen__skip">រំលង</string>
+    <!-- Title for the skip restore confirmation dialog -->
+    <string name="ArchiveRestoreSelectionScreen__skip_restore_dialog_title">រំលងការស្តារ?</string>
+    <!-- Warning body text for the skip restore confirmation dialog -->
+    <string name="ArchiveRestoreSelectionScreen__skip_restore_dialog_warning">ប្រសិនបើអ្នករំលងការស្ដារឥឡូវនេះ អ្នកនឹងមិនអាចស្ដារនៅពេលក្រោយបានទេ។ ប្រសិនបើអ្នកបើកការបម្រុងទុកឡើងវិញបន្ទាប់ពីរំលងការស្ដារ ការបម្រុងទុកបច្ចុប្បន្នរបស់អ្នកនឹងត្រូវបានជំនួសដោយប្រវត្តិសារថ្មីរបស់អ្នក។</string>
+    <!-- Confirm button text for the skip restore dialog -->
+    <string name="ArchiveRestoreSelectionScreen__skip_restore_dialog_confirm_button">រំលងការស្តារ</string>
 </resources>

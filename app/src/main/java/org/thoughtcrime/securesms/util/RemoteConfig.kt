@@ -11,7 +11,6 @@ import org.signal.core.util.gibiBytes
 import org.signal.core.util.kibiBytes
 import org.signal.core.util.logging.Log
 import org.signal.core.util.mebiBytes
-import org.thoughtcrime.securesms.BuildConfig
 import org.thoughtcrime.securesms.dependencies.AppDependencies
 import org.thoughtcrime.securesms.groups.SelectionLimits
 import org.thoughtcrime.securesms.jobs.RemoteConfigRefreshJob
@@ -522,24 +521,6 @@ object RemoteConfig {
     )
   }
 
-  /**
-   * A config that evaluates to true when the app's version is >= the semantic version string (e.g. "8.2.0") stored in the remote config value.
-   *
-   * Returns false if the remote value is absent, empty, or unparseable.
-   */
-  @Suppress("SameParameterValue")
-  private fun remoteMinVersion(
-    key: String
-  ): Config<Boolean> = remoteValue(
-    key = key,
-    hotSwappable = true,
-    transformer = { value ->
-      val minVersion = SemanticVersion.parse(value.asString(null))
-      val appVersion = SemanticVersion.parse(BuildConfig.VERSION_NAME.substringBefore("-"))
-      minVersion != null && appVersion != null && appVersion >= minVersion
-    }
-  )
-
   private fun <T> remoteValue(
     key: String,
     hotSwappable: Boolean,
@@ -948,6 +929,15 @@ object RemoteConfig {
     hotSwappable = true
   )
 
+  /** Maximum size a video transcode should target in bytes  */
+  @JvmStatic
+  @get:JvmName("videoTranscodeTargetSizeBytes")
+  val videoTranscodeTargetSizeBytes: Long by remoteLong(
+    key = "global.videoAttachments.transcodeTargetBytes",
+    defaultValue = 100.mebiBytes.inWholeBytes,
+    hotSwappable = true
+  )
+
   /** Maximum input size when opening a video to send in bytes  */
   @JvmStatic
   @get:JvmName("maxSourceTranscodeVideoSizeBytes")
@@ -1236,22 +1226,6 @@ object RemoteConfig {
   )
 
   @JvmStatic
-  @get:JvmName("receivePinnedMessages")
-  val receivePinnedMessages: Boolean by remoteBoolean(
-    key = "android.receivePinnedMessages.2",
-    defaultValue = false,
-    hotSwappable = true
-  )
-
-  @JvmStatic
-  @get:JvmName("sendPinnedMessages")
-  val sendPinnedMessages: Boolean by remoteBoolean(
-    key = "android.sendPinnedMessages.2",
-    defaultValue = false,
-    hotSwappable = true
-  )
-
-  @JvmStatic
   @get:JvmName("callQualitySurvey")
   val callQualitySurvey: Boolean by remoteBoolean(
     key = "android.callQualitySurvey.4",
@@ -1276,15 +1250,6 @@ object RemoteConfig {
     key = "android.pollsV2",
     defaultValue = false,
     hotSwappable = true
-  )
-
-  /**
-   * Whether to enable modifying group member labels.
-   */
-  @JvmStatic
-  @get:JvmName("sendMemberLabels")
-  val sendMemberLabels: Boolean by remoteMinVersion(
-    key = "android.sendMemberLabels.4"
   )
 
   /**
@@ -1338,5 +1303,39 @@ object RemoteConfig {
     defaultValue = 0,
     hotSwappable = true
   )
+
+  /**
+   * Whether or not to allow admins to terminate groups.
+   */
+  @JvmStatic
+  @get:JvmName("groupTerminateSend")
+  val groupTerminateSend: Boolean by remoteBoolean(
+    key = "android.groupTerminateSend",
+    defaultValue = false,
+    hotSwappable = true
+  )
+
+  /**
+   * Whether to collapse update events
+   */
+  @JvmStatic
+  @get:JvmName("collapseEvents")
+  val collapseEvents: Boolean by remoteBoolean(
+    key = "android.collapseEvents",
+    defaultValue = false,
+    hotSwappable = true
+  )
+
+  /**
+   * Whether to use the new custom APNG renderer instead of the existing third-party library.
+   */
+  @JvmStatic
+  @get:JvmName("newApngRenderer")
+  val newApngRenderer: Boolean by remoteBoolean(
+    key = "android.newApngRenderer",
+    defaultValue = false,
+    hotSwappable = false
+  )
+
   // endregion
 }
