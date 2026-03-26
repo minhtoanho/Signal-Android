@@ -166,7 +166,7 @@ sequenceDiagram
 ```kotlin
 // Quote thumbnail dimensions
 private const val QUOTE_THUMBNAIL_DIMEN = 200
-private const val QUOTE_THUMBNAIL_QUALITY = 50
+private const val QUOTE_THUMBAIL_QUALITY = 50  // Note: Typo in code (missing 'N')
 ```
 
 **Source:** `app/src/main/java/org/thoughtcrime/securesms/database/AttachmentTable.kt:319-320`
@@ -243,7 +243,7 @@ For users with Signal backup subscription, media is copied to Archive CDN for lo
 | `PERMANENT_FAILURE` | 4 | Cannot upload (unrecoverable) |
 | `TEMPORARY_FAILURE` | 5 | May retry later |
 
-**Source:** `app/src/main/java/org/thoughtcrime/securesms/database/AttachmentTable.kt:3865-3903`
+**Source:** `app/src/main/java/org/thoughtcrime/securesms/database/AttachmentTable.kt:3879-3903`
 
 #### Archive Sync Interval
 
@@ -269,7 +269,7 @@ The following attachment types are **NOT** backed up to Archive CDN:
 | Long text attachments | Can be regenerated |
 | Linked device attachments | Synced from primary device |
 
-**Source:** `app/src/main/java/org/thoughtcrime/securesms/jobs/AttachmentUploadJob.kt:191-217`
+**Source:** `app/src/main/java/org/thoughtcrime/securesms/jobs/CopyAttachmentToArchiveJob.kt:113-141`
 
 ---
 
@@ -470,7 +470,7 @@ flowchart LR
 | `CDN2_RESUMABLE_LINK_LIFETIME_MILLIS` | 7 days | `PushServiceSocket.java:198` |
 | `UPLOAD_REUSE_THRESHOLD` | 3 days | `AttachmentUploadJob.kt:71` |
 | `QUOTE_THUMBNAIL_DIMEN` | 200 px | `AttachmentTable.kt:319` |
-| `QUOTE_THUMBNAIL_QUALITY` | 50 | `AttachmentTable.kt:320` |
+| `QUOTE_THUMBAIL_QUALITY` | 50 | `AttachmentTable.kt:320` |
 
 ---
 
