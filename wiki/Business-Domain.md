@@ -176,17 +176,44 @@ graph TB
 | **PNI (Phone Number ID)** | Secondary identifier for phone number | `Pni` |
 | **Identity Key** | Long-term public key for user | `IdentityKey`, `IdentityTable` |
 | **Profile Key** | Key for accessing user profile | `ProfileKey`, `ProfileKeyUtil` |
-| **Session** | Cryptographic state with another user | `SessionTable` |
+| **Session** | 1:1 encrypted channel between two devices, established via X3DH | `SessionTable`, `SessionRecord` |
+| **Sender Key** | Shared key for efficient group messaging, per-sender per-group | `SenderKeyTable`, `SenderKeyRecord` |
+| **Distribution ID** | Unique identifier for a group's sender key session | `DistributionId` |
+| **SignalProtocolAddress** | Identifies a recipient+device combination | `SignalProtocolAddress(name, deviceId)` |
+| **Device** | Linked device with unique device ID (1=primary, 2+=linked) | `SignalProtocolAddress.deviceId` |
 | **PreKey** | One-time key for new sessions | `OneTimePreKeyTable` |
 | **Signed PreKey** | Medium-term key signed by identity | `SignedPreKeyTable` |
 | **Kyber PreKey** | Post-quantum key for new sessions | `KyberPreKeyTable` |
+
+### Domain Events
+
+| Event | Trigger | Handler |
+|-------|---------|---------|
+| **SessionEstablished** | First message to recipient via X3DH | `SignalServiceMessageSender` |
+| **SenderKeyDistributed** | New member joins group, receives SKDM | `SenderKeyDistributionSendJob` |
+| **IdentityChanged** | Contact's identity key changes | `SafetyNumberChangeDialog` |
+| **DeviceLinked** | New device provisioned via QR code | `LinkDeviceRepository` |
+| **SenderKeyRotated** | Member leaves group, key rotated | `SenderKeyUtil.rotateOurKey` |
+| **SessionArchived** | Session invalidated or identity changed | `SessionTable.archiveSession` |
+
+### Aggregate Roots
+
+| Aggregate | Root Entity | Repository | Consistency Rules |
+|-----------|-------------|------------|-------------------|
+| **Session** | `SessionRecord` | `SessionTable` | Each session maintains independent ratchet state per device pair |
+| **Sender Key** | `SenderKeyRecord` | `SenderKeyTable` | Per-sender, per-group key session with chain key and ratchet |
+| **Identity** | `IdentityKey` | `IdentityTable` | Long-term key with verification status and trust history |
 
 ### Business Rules
 
 1. **Identity Key Rotation**: Users can rotate their identity key
 2. **Safety Number Change**: Users are warned when contact's key changes
-3. **Session Management**: Sessions are created on first message exchange
+3. **Session Management**: Sessions are created on first message exchange via X3DH
 4. **Key Exhaustion**: New PreKeys are uploaded when supply is low
+5. **Sender Key Efficiency**: One encryption for all group members instead of N individual encryptions
+6. **Key Rotation on Leave**: Sender keys rotated when membership changes to prevent removed members from decrypting
+7. **Multi-Device Sessions**: Each device maintains separate sessions with the same identity key
+8. **Trust on First Use**: New identity keys are trusted by default, changes require verification
 
 ---
 

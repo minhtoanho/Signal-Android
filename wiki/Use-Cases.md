@@ -335,6 +335,139 @@ flowchart TD
 
 ---
 
+## Protocol Use Cases
+
+### UC-09: Establish Session
+
+**Actor**: Sender Device
+**Goal**: Create encrypted channel with recipient device
+
+```mermaid
+flowchart TD
+    A[Send Message] --> B{Session Exists?}
+    B -->|Yes| C[Encrypt with Session]
+    B -->|No| D[Fetch PreKey Bundle]
+    D --> E[Validate Signed PreKey]
+    E --> F[Perform X3DH Key Agreement]
+    F --> G[Derive Root Key]
+    G --> H[Initialize Double Ratchet]
+    H --> I[Store Session]
+    I --> C
+    C --> J[Send Encrypted Message]
+```
+
+**Preconditions**:
+- Sender has Signal account
+- Recipient is registered on Signal
+- Network connectivity
+
+**Main Flow**:
+1. Sender initiates message send
+2. Signal checks for existing session with recipient device
+3. If no session, fetch PreKey bundle from server
+4. Validate signed PreKey signature with identity key
+5. Perform X3DH key agreement:
+   - DH1 = DH(IK_sender, SPK_recipient)
+   - DH2 = DH(EK_sender, IK_recipient)
+   - DH3 = DH(EK_sender, SPK_recipient)
+   - DH4 = DH(EK_sender, OPK_recipient) if available
+6. Derive root key from combined DH outputs
+7. Initialize Double Ratchet state
+8. Store session in SessionTable
+9. Encrypt message with new session
+
+**Multi-Device Handling**:
+- For recipients with multiple devices, establish session for each device
+- Each device gets unique session with independent ratchet state
+- All sessions use same identity key but different PreKeys
+
+**Code Location**: `lib/libsignal-service/.../SignalServiceMessageSender.java:2831-2870`
+
+---
+
+### UC-10: Distribute Sender Key
+
+**Actor**: Group Member
+**Goal**: Share group encryption key with other members
+
+```mermaid
+flowchart TD
+    A[Send Group Message] --> B{Sender Key Exists?}
+    B -->|No| C[Create Sender Key Session]
+    B -->|Yes| D{Key Age OK?}
+    D -->|No| C
+    D -->|Yes| E[Check Shared Status]
+    C --> F[Get Recipients Needing Key]
+    E --> F
+    F --> G{Recipients Need Key?}
+    G -->|Yes| H[Create SKDM]
+    H --> I[Send SKDM to Each Device]
+    I --> J[Mark as Shared]
+    G -->|No| K[Encrypt with Sender Key]
+    J --> K
+    K --> L[Send Group Message]
+```
+
+**Preconditions**:
+- Sender is member of Signal group
+- DistributionId exists for group
+
+**Main Flow**:
+1. Sender initiates group message send
+2. Signal checks sender key age, rotates if too old
+3. Signal checks which recipients have received this sender key
+4. For recipients missing the key:
+   - Create SenderKeyDistributionMessage (SKDM)
+   - Send SKDM to all devices of each recipient
+   - Mark sender key as shared in SenderKeySharedTable
+5. Encrypt message once with sender key
+6. Send encrypted message to all recipients
+
+**Security Guarantees**:
+- One encryption for all recipients (efficient)
+- Sender key rotated when membership changes
+- Removed members cannot decrypt future messages
+
+**Code Location**: `lib/libsignal-service/.../SignalServiceMessageSender.java:2480-2613`
+
+---
+
+### UC-11: Handle Group Membership Change
+
+**Actor**: System
+**Goal**: Maintain group security when membership changes
+
+```mermaid
+flowchart TD
+    A[Membership Change Detected] --> B{Change Type?}
+    B -->|Member Added| C[Get Group State]
+    B -->|Member Removed| D[Update Local Group]
+    C --> E[Enqueue SKDM to New Member]
+    D --> F[Rotate Sender Key]
+    E --> G[New Member Can Decrypt]
+    F --> H[Clear Shared Status]
+    H --> I[Next Send Distributes New Key]
+```
+
+**Member Added Flow**:
+1. Server notifies of new member
+2. Local group state updated
+3. SenderKeyDistributionSendJob enqueued
+4. SKDM sent to new member's devices
+5. Member can decrypt future group messages
+
+**Member Removed Flow**:
+1. Server notifies of member removal
+2. Local group state updated
+3. Sender key rotated (deleted + cleared shared status)
+4. Next group message creates new sender key
+5. New key distributed to remaining members only
+6. Removed member cannot decrypt future messages
+
+**Code Location**: `app/.../groups/v2/processing/GroupsV2StateProcessor.kt`, `app/.../crypto/SenderKeyUtil.java:18-23`
+
+---
+
 ## Secondary Use Cases
 
 ### UC-09: Report Spam/Block User

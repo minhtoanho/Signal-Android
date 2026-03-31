@@ -131,6 +131,47 @@ C4Component
 | **PreKeyUtil** | `crypto` | PreKey generation and management |
 | **SenderKeyUtil** | `crypto` | Group encryption keys |
 
+### Protocol Layer (libsignal-service)
+
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| **SignalServiceMessageSender** | `libsignal-service/.../SignalServiceMessageSender.java` | Outgoing messages, session establishment, sender key distribution |
+| **SignalServiceMessageReceiver** | `libsignal-service/.../SignalServiceMessageReceiver.java` | Incoming messages, envelope fetching |
+| **SignalServiceCipher** | `libsignal-service/.../SignalServiceCipher.java` | Envelope encryption/decryption |
+| **SignalSessionBuilder** | `libsignal-service/.../SignalSessionBuilder.java` | X3DH session establishment wrapper |
+| **SignalGroupSessionBuilder** | `libsignal-service/.../SignalGroupSessionBuilder.java` | Sender key session creation |
+| **SignalGroupCipher** | `libsignal-service/.../SignalGroupCipher.java` | Group message encryption/decryption |
+| **SignalSealedSessionCipher** | `libsignal-service/.../SignalSealedSessionCipher.java` | Sealed sender encryption |
+
+### Protocol Storage Layer
+
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| **SessionTable** | `app/.../database/SessionTable.kt` | Session records per (address, device) |
+| **SenderKeyTable** | `app/.../database/SenderKeyTable.kt` | Sender key sessions per distribution ID |
+| **SenderKeySharedTable** | `app/.../database/SenderKeySharedTable.kt` | Tracks which recipients have sender key |
+| **IdentityTable** | `app/.../database/IdentityTable.kt` | Identity keys with verification status |
+| **TextSecureSessionStore** | `app/.../crypto/storage/TextSecureSessionStore.java` | Session store implementation |
+| **SignalSenderKeyStore** | `app/.../crypto/storage/SignalSenderKeyStore.java` | Sender key store implementation |
+| **SignalBaseIdentityKeyStore** | `app/.../crypto/storage/SignalBaseIdentityKeyStore.java` | Identity store implementation |
+
+### Multi-Device Layer
+
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| **LinkDeviceRepository** | `app/.../linkdevice/LinkDeviceRepository.kt` | Device linking via QR code |
+| **PrimaryProvisioningCipher** | `lib/.../crypto/PrimaryProvisioningCipher.java` | Encrypt provisioning data for new device |
+| **SecondaryProvisioningCipher** | `lib/.../crypto/SecondaryProvisioningCipher.kt` | Decrypt provisioning data on new device |
+| **MultiDevice*Jobs** | `app/.../jobs/MultiDevice*.java` | Sync jobs for linked devices |
+
+### Protocol Jobs
+
+| Job | File | Purpose |
+|-----|------|---------|
+| **SenderKeyDistributionSendJob** | `app/.../jobs/SenderKeyDistributionSendJob.java` | Send SKDM to new group members |
+| **RefreshPreKeysJob** | `app/.../jobs/RefreshPreKeysJob.java` | Refresh prekey supply from server |
+| **RotateSignedPreKeyJob** | `app/.../jobs/RotateSignedPreKeyJob.java` | Rotate signed prekey periodically |
+
 ### Network Domain
 
 | Component | Package | Responsibility |
@@ -206,6 +247,61 @@ sequenceDiagram
     MS-->>UI: sendComplete
 ```
 
+### Session Establishment Flow
+
+```mermaid
+sequenceDiagram
+    participant App as App Layer
+    participant SSM as SignalServiceMessageSender
+    participant KeysApi as KeysApi
+    participant Builder as SessionBuilder
+    participant Store as SessionTable
+    participant Server as Signal Server
+
+    App->>SSM: send(recipient, message)
+    SSM->>SSM: checkSession(recipient)
+    alt No Session Exists
+        SSM->>KeysApi: getPreKeys(recipient)
+        KeysApi->>Server: GET /v2/keys/{recipient}
+        Server-->>KeysApi: PreKeyBundle
+        KeysApi-->>SSM: PreKeyBundle
+        
+        loop For each device
+            SSM->>Builder: process(preKey)
+            Note over Builder: X3DH Key Agreement
+            Builder->>Store: storeSession(address, record)
+        end
+    end
+    SSM->>SSM: encrypt(message)
+    SSM->>Server: send(encryptedMessage)
+```
+
+### Sender Key Distribution Flow
+
+```mermaid
+sequenceDiagram
+    participant App as GroupSendUtil
+    participant SSM as SignalServiceMessageSender
+    participant GSB as SignalGroupSessionBuilder
+    participant SKStore as SenderKeySharedTable
+    participant Server as Signal Server
+
+    App->>SSM: sendGroupMessage(distributionId, recipients)
+    SSM->>SKStore: getSharedWith(distributionId)
+    SKStore-->>SSM: sharedRecipients
+    
+    loop For recipients not in sharedRecipients
+        SSM->>GSB: create(self, distributionId)
+        GSB-->>SSM: SenderKeyDistributionMessage
+        SSM->>Server: sendSKDM(recipient, SKDM)
+        Server-->>SSM: success
+        SSM->>SKStore: markShared(distributionId, recipient)
+    end
+    
+    SSM->>SSM: encryptForGroup(message)
+    SSM->>Server: sendGroupMessage(ciphertext)
+```
+
 ## Database Tables
 
 ### Core Tables
@@ -255,3 +351,5 @@ sequenceDiagram
 - [Container Diagram](C4-Container-Diagram.md) - High-level containers
 - [Database](Database.md) - Complete database schema
 - [Module Structure](Module-Structure.md) - Module organization
+- [Session & Sender Key Distribution](Session-And-SenderKey-Distribution-Flow.md) - Technical deep dive with code references
+- [E2EE Session Initialization](E2EE-Session-Initialization-Flow.md) - X3DH and prekey exchange details
