@@ -174,11 +174,11 @@ graph TB
 |------|------------|---------------|
 | **ACI (Account ID)** | Primary account identifier | `Aci` |
 | **PNI (Phone Number ID)** | Secondary identifier for phone number | `Pni` |
-| **Identity Key** | Long-term public key for user | `IdentityKey`, `IdentityTable` |
+| **Identity Key** | Long-term public key for user | `IdentityKey`, `IdentityTable.kt:48` |
 | **Profile Key** | Key for accessing user profile | `ProfileKey`, `ProfileKeyUtil` |
-| **Session** | 1:1 encrypted channel between two devices, established via X3DH | `SessionTable`, `SessionRecord` |
-| **Sender Key** | Shared key for efficient group messaging, per-sender per-group | `SenderKeyTable`, `SenderKeyRecord` |
-| **Distribution ID** | Unique identifier for a group's sender key session | `DistributionId` |
+| **Session** | 1:1 encrypted channel between two devices, established via X3DH | `SessionTable.kt:22`, `SessionRecord` |
+| **Sender Key** | Shared key for efficient group messaging, per-sender per-group | `SenderKeyTable.kt:27`, `SenderKeyRecord` |
+| **Distribution ID** | Unique identifier for a group's sender key session | `DistributionId.java:14` |
 | **SignalProtocolAddress** | Identifies a recipient+device combination | `SignalProtocolAddress(name, deviceId)` |
 | **Device** | Linked device with unique device ID (1=primary, 2+=linked) | `SignalProtocolAddress.deviceId` |
 | **PreKey** | One-time key for new sessions | `OneTimePreKeyTable` |
@@ -187,22 +187,22 @@ graph TB
 
 ### Domain Events
 
-| Event | Trigger | Handler |
-|-------|---------|---------|
-| **SessionEstablished** | First message to recipient via X3DH | `SignalServiceMessageSender` |
-| **SenderKeyDistributed** | New member joins group, receives SKDM | `SenderKeyDistributionSendJob` |
-| **IdentityChanged** | Contact's identity key changes | `SafetyNumberChangeDialog` |
-| **DeviceLinked** | New device provisioned via QR code | `LinkDeviceRepository` |
-| **SenderKeyRotated** | Member leaves group, key rotated | `SenderKeyUtil.rotateOurKey` |
-| **SessionArchived** | Session invalidated or identity changed | `SessionTable.archiveSession` |
+| Event | Trigger | Handler | Code Location |
+|-------|---------|---------|---------------|
+| **SessionEstablished** | First message to recipient via X3DH | `SignalServiceMessageSender` | `SignalServiceMessageSender.java:2841-2855` |
+| **SenderKeyDistributed** | New member joins group, receives SKDM | `SenderKeyDistributionSendJob` | `SenderKeyDistributionSendJob.java:81-139` |
+| **IdentityChanged** | Contact's identity key changes | `SafetyNumberChangeDialog` | `SignalBaseIdentityKeyStore.java:85-106` |
+| **DeviceLinked** | New device provisioned via QR code | `LinkDeviceRepository` | `LinkDeviceRepository.kt:52-151` |
+| **SenderKeyRotated** | Member leaves group, key rotated | `SenderKeyUtil.rotateOurKey` | `SenderKeyUtil.java:18` |
+| **SessionArchived** | Session invalidated or identity changed | `SessionTable.archiveSession` | `SessionTable.kt:180-190` |
 
 ### Aggregate Roots
 
-| Aggregate | Root Entity | Repository | Consistency Rules |
-|-----------|-------------|------------|-------------------|
-| **Session** | `SessionRecord` | `SessionTable` | Each session maintains independent ratchet state per device pair |
-| **Sender Key** | `SenderKeyRecord` | `SenderKeyTable` | Per-sender, per-group key session with chain key and ratchet |
-| **Identity** | `IdentityKey` | `IdentityTable` | Long-term key with verification status and trust history |
+| Aggregate | Root Entity | Repository | Code Location | Consistency Rules |
+|-----------|-------------|------------|---------------|-------------------|
+| **Session** | `SessionRecord` | `SessionTable` | `SessionTable.kt:22-240` | Each session maintains independent ratchet state per device pair |
+| **Sender Key** | `SenderKeyRecord` | `SenderKeyTable` | `SenderKeyTable.kt:27-78` | Per-sender, per-group key session with chain key and ratchet |
+| **Identity** | `IdentityKey` | `IdentityTable` | `IdentityTable.kt:48-250` | Long-term key with verification status and trust history |
 
 ### Business Rules
 

@@ -123,54 +123,68 @@ C4Component
 
 ### Crypto Domain
 
-| Component | Package | Responsibility |
-|-----------|---------|----------------|
-| **SignalProtocol** | `libsignal` | Core Signal Protocol implementation |
-| **SessionCipher** | `libsignal` | Message encryption/decryption |
-| **IdentityKeyUtil** | `crypto` | Identity key management |
-| **PreKeyUtil** | `crypto` | PreKey generation and management |
-| **SenderKeyUtil** | `crypto` | Group encryption keys |
+| Component | Package | Lines | Responsibility |
+|-----------|---------|-------|----------------|
+| **SignalProtocol** | `libsignal` | N/A | Core Signal Protocol implementation |
+| **SessionCipher** | `libsignal` | N/A | Message encryption/decryption |
+| **IdentityKeyUtil** | `crypto` | varies | Identity key management |
+| **PreKeyUtil** | `crypto` | varies | PreKey generation and management |
+| **SenderKeyUtil** | `app/.../crypto/SenderKeyUtil.java` | 18-50 | Group encryption keys, rotation |
+
+### Key Methods with Code References
+
+| Method | File | Lines | Purpose |
+|--------|------|-------|---------|
+| `getEncryptedMessage()` | `SignalServiceMessageSender.java` | 2831-2870 | Check session, fetch prekeys, encrypt |
+| `sendGroupMessage()` | `SignalServiceMessageSender.java` | 2480-2613 | Sender key distribution, group encryption |
+| `getOrCreateNewGroupSession()` | `SignalServiceMessageSender.java` | 503-506 | Create SKDM for group |
+| `process()` (X3DH) | `SignalSessionBuilder.java` | 22-26 | X3DH key agreement |
+| `create()` (Sender Key) | `SignalGroupSessionBuilder.java` | 30-34 | Create sender key session |
+| `rotateOurKey()` | `SenderKeyUtil.java` | 18-23 | Rotate sender key on membership change |
+| `markAsShared()` | `SenderKeySharedTable.kt` | 47-58 | Mark sender key shared with recipient |
+| `storeSession()` | `SessionTable.kt` | 44-56 | Store session record |
+| `saveIdentity()` | `SignalBaseIdentityKeyStore.java` | 74-116 | Save identity key, detect changes |
 
 ### Protocol Layer (libsignal-service)
 
-| Component | File | Responsibility |
-|-----------|------|----------------|
-| **SignalServiceMessageSender** | `libsignal-service/.../SignalServiceMessageSender.java` | Outgoing messages, session establishment, sender key distribution |
-| **SignalServiceMessageReceiver** | `libsignal-service/.../SignalServiceMessageReceiver.java` | Incoming messages, envelope fetching |
-| **SignalServiceCipher** | `libsignal-service/.../SignalServiceCipher.java` | Envelope encryption/decryption |
-| **SignalSessionBuilder** | `libsignal-service/.../SignalSessionBuilder.java` | X3DH session establishment wrapper |
-| **SignalGroupSessionBuilder** | `libsignal-service/.../SignalGroupSessionBuilder.java` | Sender key session creation |
-| **SignalGroupCipher** | `libsignal-service/.../SignalGroupCipher.java` | Group message encryption/decryption |
-| **SignalSealedSessionCipher** | `libsignal-service/.../SignalSealedSessionCipher.java` | Sealed sender encryption |
+| Component | File | Lines | Responsibility |
+|-----------|------|-------|----------------|
+| **SignalServiceMessageSender** | `lib/.../SignalServiceMessageSender.java` | 170-3114 | Outgoing messages, session establishment, sender key distribution |
+| **SignalServiceMessageReceiver** | `lib/.../SignalServiceMessageReceiver.java` | 50-800 | Incoming messages, envelope fetching |
+| **SignalServiceCipher** | `lib/.../SignalServiceCipher.java` | 69-284 | Envelope encryption/decryption |
+| **SignalSessionBuilder** | `lib/.../SignalSessionBuilder.java` | 12-27 | X3DH session establishment wrapper |
+| **SignalGroupSessionBuilder** | `lib/.../SignalGroupSessionBuilder.java` | 14-34 | Sender key session creation |
+| **SignalGroupCipher** | `lib/.../SignalGroupCipher.java` | 15-38 | Group message encryption/decryption |
+| **SignalSealedSessionCipher** | `lib/.../SignalSealedSessionCipher.java` | 34-83 | Sealed sender encryption |
 
 ### Protocol Storage Layer
 
-| Component | File | Responsibility |
-|-----------|------|----------------|
-| **SessionTable** | `app/.../database/SessionTable.kt` | Session records per (address, device) |
-| **SenderKeyTable** | `app/.../database/SenderKeyTable.kt` | Sender key sessions per distribution ID |
-| **SenderKeySharedTable** | `app/.../database/SenderKeySharedTable.kt` | Tracks which recipients have sender key |
-| **IdentityTable** | `app/.../database/IdentityTable.kt` | Identity keys with verification status |
-| **TextSecureSessionStore** | `app/.../crypto/storage/TextSecureSessionStore.java` | Session store implementation |
-| **SignalSenderKeyStore** | `app/.../crypto/storage/SignalSenderKeyStore.java` | Sender key store implementation |
-| **SignalBaseIdentityKeyStore** | `app/.../crypto/storage/SignalBaseIdentityKeyStore.java` | Identity store implementation |
+| Component | File | Lines | Responsibility |
+|-----------|------|-------|----------------|
+| **SessionTable** | `app/.../database/SessionTable.kt` | 22-240 | Session records per (address, device) |
+| **SenderKeyTable** | `app/.../database/SenderKeyTable.kt` | 27-78 | Sender key sessions per distribution ID |
+| **SenderKeySharedTable** | `app/.../database/SenderKeySharedTable.kt` | 23-150 | Tracks which recipients have sender key |
+| **IdentityTable** | `app/.../database/IdentityTable.kt` | 48-250 | Identity keys with verification status |
+| **TextSecureSessionStore** | `app/.../crypto/storage/TextSecureSessionStore.java` | 24-203 | Session store implementation |
+| **SignalSenderKeyStore** | `app/.../crypto/storage/SignalSenderKeyStore.java` | 20-150 | Sender key store implementation |
+| **SignalBaseIdentityKeyStore** | `app/.../crypto/storage/SignalBaseIdentityKeyStore.java` | 40-256 | Identity store implementation |
 
 ### Multi-Device Layer
 
-| Component | File | Responsibility |
-|-----------|------|----------------|
-| **LinkDeviceRepository** | `app/.../linkdevice/LinkDeviceRepository.kt` | Device linking via QR code |
-| **PrimaryProvisioningCipher** | `lib/.../crypto/PrimaryProvisioningCipher.java` | Encrypt provisioning data for new device |
-| **SecondaryProvisioningCipher** | `lib/.../crypto/SecondaryProvisioningCipher.kt` | Decrypt provisioning data on new device |
-| **MultiDevice*Jobs** | `app/.../jobs/MultiDevice*.java` | Sync jobs for linked devices |
+| Component | File | Lines | Responsibility |
+|-----------|------|-------|----------------|
+| **LinkDeviceRepository** | `app/.../linkdevice/LinkDeviceRepository.kt` | 52-151 | Device linking via QR code |
+| **PrimaryProvisioningCipher** | `lib/.../crypto/PrimaryProvisioningCipher.java` | 15-80 | Encrypt provisioning data for new device |
+| **SecondaryProvisioningCipher** | `lib/.../crypto/SecondaryProvisioningCipher.kt` | 20-90 | Decrypt provisioning data on new device |
+| **MultiDevice*Jobs** | `app/.../jobs/MultiDevice*.java` | varies | Sync jobs for linked devices |
 
 ### Protocol Jobs
 
-| Job | File | Purpose |
-|-----|------|---------|
-| **SenderKeyDistributionSendJob** | `app/.../jobs/SenderKeyDistributionSendJob.java` | Send SKDM to new group members |
-| **RefreshPreKeysJob** | `app/.../jobs/RefreshPreKeysJob.java` | Refresh prekey supply from server |
-| **RotateSignedPreKeyJob** | `app/.../jobs/RotateSignedPreKeyJob.java` | Rotate signed prekey periodically |
+| Job | File | Lines | Purpose |
+|-----|------|-------|---------|
+| **SenderKeyDistributionSendJob** | `app/.../jobs/SenderKeyDistributionSendJob.java` | 38-160 | Send SKDM to new group members |
+| **RefreshPreKeysJob** | `app/.../jobs/RefreshPreKeysJob.java` | 25-120 | Refresh prekey supply from server |
+| **RotateSignedPreKeyJob** | `app/.../jobs/RotateSignedPreKeyJob.java` | 20-80 | Rotate signed prekey periodically |
 
 ### Network Domain
 
