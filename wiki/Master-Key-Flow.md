@@ -6,537 +6,439 @@
 
 Signal uses two distinct "master key" concepts:
 
-| Concept | Purpose | Location |
-|---------|---------|----------|
-| **MasterSecret** | Local database encryption | `app/.../crypto/` |
-| **MasterKey** | SVR2 backup/recovery of account keys | `core/models-jvm/`, `lib/libsignal-service/` |
+| Concept | Purpose | Location | Code File |
+|---------|---------|----------|-----------|
+| **MasterSecret** | Local database encryption | `app/.../crypto/` | [`MasterSecret.java:42`](app/src/main/java/org/thoughtcrime/securesms/crypto/MasterSecret.java#L42) |
+| **MasterKey** | SVR2 backup/recovery of account keys | `core/models-jvm/` | [`MasterKey.kt:13`](core/models-jvm/src/main/java/org/signal/core/models/MasterKey.kt#L13) |
 
 ---
 
-## 1. MasterSecret (Legacy Database Encryption)
+## 1. MasterSecret Flow (Legacy Database Encryption)
 
-The `MasterSecret` is used to encrypt local data at rest. It consists of two keys:
+### Code Locations
 
-- **Encryption Key**: 128-bit AES key for encrypting local data
-- **MAC Key**: 160-bit HMAC-SHA1 key for integrity verification
+| Component | File | Key Lines |
+|-----------|------|-----------|
+| MasterSecret class | `app/.../crypto/MasterSecret.java` | 42-120 |
+| Key Generation | `app/.../crypto/MasterSecretUtil.java` | 170-193 |
+| Key Retrieval | `app/.../crypto/MasterSecretUtil.java` | 106-128 |
+| Encryption/Decryption | `app/.../crypto/MasterCipher.java` | 55-224 |
+| In-Memory Cache | `app/.../service/KeyCachingService.java` | 62-330 |
 
-### Key Generation Flow
+### MasterSecret Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    MasterSecret Generation                       │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  1. Generate Random Keys                                        │
-│     ├── encryptionSecret = KeyGenerator("AES").init(128)        │
-│     └── macSecret = KeyGenerator("HmacSHA1").generate()         │
-│                                                                 │
-│  2. Combine and Encrypt with Passphrase                         │
-│     ├── combinedSecrets = combine(encryptionSecret, macSecret)  │
-│     ├── encryptionSalt = generateSalt()        // 16 bytes     │
-│     ├── iterations = calculateIterations()     // adaptive      │
-│     └── encryptedSecret = PBE.encrypt(combinedSecrets, pin)     │
-│                                                                 │
-│  3. MAC the Encrypted Data                                      │
-│     ├── macSalt = generateSalt()               // 16 bytes     │
-│     └── maccedData = HMAC(encryptedSecret, pin, macSalt)        │
-│                                                                 │
-│  4. Store Securely                                              │
-│     ├── SharedPreferences: encryption_salt                      │
-│     ├── SharedPreferences: mac_salt                             │
-│     ├── SharedPreferences: passphrase_iterations                │
-│     └── SharedPreferences: master_secret (encrypted + MAC)      │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+MasterSecret (128-bit AES + 160-bit HMAC)
+├── encryptionKey: SecretKeySpec (128-bit AES)
+└── macKey: SecretKeySpec (160-bit HMAC-SHA1)
 ```
 
-### Code Implementation
+**Reference:** [`MasterSecret.java:44-45`](app/src/main/java/org/thoughtcrime/securesms/crypto/MasterSecret.java#L44-L45)
 
-#### MasterSecret.java
+### Flow 1.1: Key Generation
 
-```java
-public class MasterSecret implements Parcelable {
-    private final SecretKeySpec encryptionKey;  // 128-bit AES
-    private final SecretKeySpec macKey;         // 160-bit HMAC-SHA1
-
-    public MasterSecret(SecretKeySpec encryptionKey, SecretKeySpec macKey) {
-        this.encryptionKey = encryptionKey;
-        this.macKey = macKey;
-    }
-
-    public SecretKeySpec getEncryptionKey() { return this.encryptionKey; }
-    public SecretKeySpec getMacKey() { return this.macKey; }
-}
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                MASTERSECRET GENERATION FLOW                         │
+│                MasterSecretUtil.generateMasterSecret():170-193      │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  STEP 1: Generate Random Keys                                      │
+│  ├── generateEncryptionSecret():248-259 → 128-bit AES key         │
+│  └── generateMacSecret():261-269 → 160-bit HMAC key               │
+│                                                                    │
+│  STEP 2: Combine Secrets                                           │
+│  └── Util.combine(encryptionSecret, macSecret):174                │
+│                                                                    │
+│  STEP 3: Generate Salt & Calculate Iterations                      │
+│  ├── generateSalt():271-277 → 16 random bytes                     │
+│  └── generateIterationCount():279-303 → adaptive count            │
+│                                                                    │
+│  STEP 4: Encrypt with Passphrase (PBE)                             │
+│  └── encryptWithPassphrase():323-328                              │
+│      └── PBEWITHSHA1AND128BITAES-CBC-BC                           │
+│                                                                    │
+│  STEP 5: MAC the Encrypted Data                                    │
+│  └── macWithPassphrase():364-373                                  │
+│                                                                    │
+│  STEP 6: Store in SharedPreferences                                │
+│  ├── "encryption_salt" → :181                                      │
+│  ├── "mac_salt" → :182                                             │
+│  ├── "passphrase_iterations" → :183                               │
+│  ├── "master_secret" (encrypted + MAC) → :184                     │
+│  └── "passphrase_initialized" = true → :185                       │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-#### MasterSecretUtil.java - Key Generation
+### Flow 1.2: Key Retrieval (Unlock)
 
-```java
-public static MasterSecret generateMasterSecret(Context context, String passphrase) {
-    // 1. Generate random secrets
-    byte[] encryptionSecret = generateEncryptionSecret();  // 128-bit AES
-    byte[] macSecret = generateMacSecret();                 // 160-bit HMAC
-    
-    // 2. Combine secrets
-    byte[] masterSecret = Util.combine(encryptionSecret, macSecret);
-    
-    // 3. Generate salts and calculate iterations
-    byte[] encryptionSalt = generateSalt();  // 16 random bytes
-    int iterations = generateIterationCount(passphrase, encryptionSalt);
-    
-    // 4. Encrypt with passphrase using PBE
-    byte[] encryptedMasterSecret = encryptWithPassphrase(
-        encryptionSalt, iterations, masterSecret, passphrase
-    );
-    
-    // 5. MAC the encrypted data
-    byte[] macSalt = generateSalt();
-    byte[] encryptedAndMacdMasterSecret = macWithPassphrase(
-        macSalt, iterations, encryptedMasterSecret, passphrase
-    );
-    
-    // 6. Store in SharedPreferences (Base64 encoded)
-    save(context, "encryption_salt", encryptionSalt);
-    save(context, "mac_salt", macSalt);
-    save(context, "passphrase_iterations", iterations);
-    save(context, "master_secret", encryptedAndMacdMasterSecret);
-    
-    return new MasterSecret(
-        new SecretKeySpec(encryptionSecret, "AES"),
-        new SecretKeySpec(macSecret, "HmacSHA1")
-    );
-}
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                MASTERSECRET RETRIEVAL FLOW                          │
+│                MasterSecretUtil.getMasterSecret():106-128           │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  STEP 1: Retrieve Stored Data                                      │
+│  ├── retrieve("master_secret"):110                                 │
+│  ├── retrieve("mac_salt"):111                                      │
+│  ├── retrieve("passphrase_iterations"):112                         │
+│  └── retrieve("encryption_salt"):114                               │
+│                                                                    │
+│  STEP 2: Verify MAC (Authentication)                               │
+│  └── verifyMac():349-362                                           │
+│      └── throws InvalidPassphraseException if wrong PIN           │
+│                                                                    │
+│  STEP 3: Decrypt with Passphrase                                   │
+│  └── decryptWithPassphrase():330-335                               │
+│                                                                    │
+│  STEP 4: Split Combined Secrets                                    │
+│  ├── encryptionSecret = split[0]:116 (16 bytes)                   │
+│  └── macSecret = split[1]:117 (20 bytes)                          │
+│                                                                    │
+│  STEP 5: Create MasterSecret Object                                │
+│  └── new MasterSecret(encryptionSecret, macSecret):119-120        │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-#### MasterSecretUtil.java - Key Retrieval
+### Flow 1.3: Data Encryption/Decryption
 
-```java
-public static MasterSecret getMasterSecret(Context context, String passphrase)
-    throws InvalidPassphraseException {
-    
-    // 1. Retrieve stored data
-    byte[] encryptedAndMacdMasterSecret = retrieve(context, "master_secret");
-    byte[] macSalt = retrieve(context, "mac_salt");
-    int iterations = retrieve(context, "passphrase_iterations", 100);
-    byte[] encryptionSalt = retrieve(context, "encryption_salt");
-    
-    // 2. Verify MAC (fails if passphrase is wrong)
-    byte[] encryptedMasterSecret = verifyMac(
-        macSalt, iterations, encryptedAndMacdMasterSecret, passphrase
-    );
-    
-    // 3. Decrypt with passphrase
-    byte[] combinedSecrets = decryptWithPassphrase(
-        encryptionSalt, iterations, encryptedMasterSecret, passphrase
-    );
-    
-    // 4. Split back into component keys
-    byte[][] parts = Util.split(combinedSecrets, 16, 20);
-    byte[] encryptionSecret = parts[0];
-    byte[] macSecret = parts[1];
-    
-    return new MasterSecret(
-        new SecretKeySpec(encryptionSecret, "AES"),
-        new SecretKeySpec(macSecret, "HmacSHA1")
-    );
-}
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                MASTERCIPHER ENCRYPTION FLOW                         │
+│                MasterCipher.encryptBytes():111-125                  │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  ENCRYPT (encryptBytes:111-125):                                   │
+│  ┌─────────────────────────────────────────────────┐              │
+│  │ Input: plaintext bytes                          │              │
+│  │                                                 │              │
+│  │ Step 1: getEncryptingCipher():217-222           │              │
+│  │         AES/CBC/PKCS5Padding, random IV         │              │
+│  │                                                 │              │
+│  │ Step 2: getEncryptedBody():181-190              │              │
+│  │         Output: [16-byte IV][AES-CBC ciphertext]│              │
+│  │                                                 │              │
+│  │ Step 3: getMacBody():199-207                    │              │
+│  │         HMAC-SHA1 over IV + ciphertext          │              │
+│  │                                                 │              │
+│  │ Output: [IV][ciphertext][20-byte HMAC]          │              │
+│  └─────────────────────────────────────────────────┘              │
+│                                                                    │
+│  DECRYPT (decryptBytes:97-109):                                    │
+│  ┌─────────────────────────────────────────────────┐              │
+│  │ Input: [IV][ciphertext][HMAC]                   │              │
+│  │                                                 │              │
+│  │ Step 1: verifyMacBody():158-175                 │              │
+│  │         Extract and verify HMAC                 │              │
+│  │         throws InvalidMessageException if bad   │              │
+│  │                                                 │              │
+│  │ Step 2: getDecryptingCipher():209-215           │              │
+│  │         Extract IV (first 16 bytes)             │              │
+│  │                                                 │              │
+│  │ Step 3: getDecryptedBody():177-179              │              │
+│  │         AES-CBC decrypt remaining bytes         │              │
+│  │                                                 │              │
+│  │ Output: plaintext bytes                         │              │
+│  └─────────────────────────────────────────────────┘              │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-### Encryption/Decryption with MasterCipher
+### Flow 1.4: In-Memory Key Cache
 
-The `MasterCipher` class provides encrypt/decrypt operations using the MasterSecret:
-
-```java
-public class MasterCipher {
-    private final MasterSecret masterSecret;
-    private final Cipher encryptingCipher;  // AES/CBC/PKCS5Padding
-    private final Mac hmac;                 // HmacSHA1
-
-    /**
-     * Encrypt format:
-     * [16-byte IV][AES-CBC encrypted data][20-byte HMAC]
-     */
-    public byte[] encryptBytes(byte[] body) {
-        // 1. Encrypt with AES-CBC
-        Cipher cipher = getEncryptingCipher(masterSecret.getEncryptionKey());
-        byte[] encrypted = cipher.doFinal(body);
-        byte[] iv = cipher.getIV();  // 16 bytes
-        
-        // 2. Combine IV + encrypted
-        byte[] ivAndBody = new byte[iv.length + encrypted.length];
-        System.arraycopy(iv, 0, ivAndBody, 0, iv.length);
-        System.arraycopy(encrypted, 0, ivAndBody, iv.length, encrypted.length);
-        
-        // 3. Calculate HMAC
-        Mac mac = getMac(masterSecret.getMacKey());
-        byte[] mac = mac.doFinal(ivAndBody);
-        
-        // 4. Return: IV + encrypted + MAC
-        byte[] result = new byte[ivAndBody.length + mac.length];
-        System.arraycopy(ivAndBody, 0, result, 0, ivAndBody.length);
-        System.arraycopy(mac, 0, result, ivAndBody.length, mac.length);
-        
-        return result;
-    }
-
-    public byte[] decryptBytes(byte[] decodedBody) throws InvalidMessageException {
-        // 1. Extract and verify MAC
-        Mac mac = getMac(masterSecret.getMacKey());
-        byte[] encryptedBody = verifyMacBody(mac, decodedBody);
-        
-        // 2. Extract IV (first 16 bytes)
-        byte[] iv = Arrays.copyOf(encryptedBody, 16);
-        byte[] encrypted = Arrays.copyOfRange(encryptedBody, 16, encryptedBody.length);
-        
-        // 3. Decrypt with AES-CBC
-        Cipher cipher = getDecryptingCipher(masterSecret.getEncryptionKey(), iv);
-        return cipher.doFinal(encrypted);
-    }
-}
 ```
-
-### KeyCachingService (In-Memory Key Cache)
-
-The `KeyCachingService` keeps the MasterSecret in memory while the app is running:
-
-```java
-public class KeyCachingService extends Service {
-    private static MasterSecret masterSecret;  // Static in-memory cache
-
-    public static synchronized MasterSecret getMasterSecret(Context context) {
-        if (masterSecret == null && passphraseDisabled) {
-            // Auto-unlock if no passphrase set
-            return MasterSecretUtil.getMasterSecret(context, UNENCRYPTED_PASSPHRASE);
-        }
-        return masterSecret;
-    }
-
-    public void setMasterSecret(MasterSecret masterSecret) {
-        synchronized (KeyCachingService.class) {
-            KeyCachingService.masterSecret = masterSecret;
-            foregroundService();       // Show lock notification
-            broadcastNewSecret();      // Notify app components
-            startTimeoutIfAppropriate(); // Auto-lock timeout
-        }
-    }
-
-    private void handleClearKey() {
-        KeyCachingService.masterSecret = null;  // Clear from memory
-        stopForeground(true);
-        sendBroadcast(new Intent(CLEAR_KEY_EVENT));
-    }
-}
+┌────────────────────────────────────────────────────────────────────┐
+│                KEYCACHINGSERVICE LIFECYCLE                          │
+│                KeyCachingService.java:62-330                        │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  STATE MANAGEMENT:                                                 │
+│  └── static masterSecret: MasterSecret = null:81                  │
+│                                                                    │
+│  CHECK LOCK STATE:                                                 │
+│  └── isLocked():85-93                                              │
+│      Returns true if masterSecret == null AND                      │
+│      (passphraseEnabled OR screenLockEnabled)                      │
+│                                                                    │
+│  GET MASTER SECRET:                                                │
+│  └── getMasterSecret():95-105                                      │
+│      If disabled passphrase → auto-unlock with UNENCRYPTED_PASSPHRASE│
+│                                                                    │
+│  SET MASTER SECRET (after unlock):                                 │
+│  └── setMasterSecret():118-132                                     │
+│      ├── Store in static field:120                                 │
+│      ├── foregroundService():122 (show lock notification)         │
+│      ├── broadcastNewSecret():123 (notify app)                    │
+│      └── startTimeoutIfAppropriate():124 (auto-lock timer)        │
+│                                                                    │
+│  CLEAR KEY (lock/manual):                                          │
+│  └── handleClearKey():186-199                                      │
+│      ├── masterSecret = null:188                                   │
+│      ├── stopForeground(true):189                                  │
+│      └── sendBroadcast(CLEAR_KEY_EVENT):194                       │
+│                                                                    │
+│  TIMEOUT MANAGEMENT:                                               │
+│  └── startTimeoutIfAppropriate():225-265                           │
+│      Uses AlarmManager to schedule auto-lock                       │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. MasterKey (SVR2 - Secure Value Recovery)
+## 2. MasterKey Flow (SVR2 - Secure Value Recovery)
 
-The `MasterKey` is a 32-byte key used to derive other cryptographic keys and is backed up to Signal's SVR2 servers using Intel SGX enclaves.
+### Code Locations
+
+| Component | File | Key Lines |
+|-----------|------|-----------|
+| MasterKey class | `core/models-jvm/.../MasterKey.kt` | 13-68 |
+| Key Derivation | `core/models-jvm/.../MasterKey.kt` | 31-49 |
+| SVR2 Client | `lib/libsignal-service/.../SecureValueRecoveryV2.kt` | 41-297 |
+| PIN Hash Utilities | `lib/libsignal-service/.../PinHashUtil.kt` | 15-82 |
 
 ### MasterKey Structure
 
-```kotlin
-class MasterKey(masterKey: ByteArray) {
-    companion object {
-        private const val LENGTH = 32  // 256 bits
+```
+MasterKey (256-bit single key)
+└── masterKey: ByteArray (32 bytes)
 
-        fun createNew(secureRandom: SecureRandom): MasterKey {
-            val key = ByteArray(LENGTH)
-            secureRandom.nextBytes(key)
-            return MasterKey(key)
-        }
-    }
-
-    // Derive different keys for different purposes
-    fun deriveRegistrationLock(): String {
-        return Hex.toStringCondensed(derive("Registration Lock"))
-    }
-
-    fun deriveRegistrationRecoveryPassword(): String {
-        return Base64.encodeWithPadding(derive("Registration Recovery")!!)
-    }
-
-    fun deriveStorageServiceKey(): StorageKey {
-        return StorageKey(derive("Storage Service Encryption")!!)
-    }
-
-    fun deriveLoggingKey(): ByteArray? {
-        return derive("Logging Key")
-    }
-
-    private fun derive(keyName: String): ByteArray? {
-        return CryptoUtil.hmacSha256(masterKey, keyName.toByteArray(Charsets.UTF_8))
-    }
-}
+Derives multiple keys via HMAC-SHA256:
+├── deriveRegistrationLock() → "Registration Lock"
+├── deriveRegistrationRecoveryPassword() → "Registration Recovery"
+├── deriveStorageServiceKey() → "Storage Service Encryption"
+└── deriveLoggingKey() → "Logging Key"
 ```
 
-### SVR2 Backup Flow
+**Reference:** [`MasterKey.kt:13-49`](core/models-jvm/src/main/java/org/signal/core/models/MasterKey.kt#L13-L49)
+
+### Flow 2.1: SVR2 Backup (Set PIN)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    SVR2 Backup (Set PIN)                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  1. User enters PIN                                             │
-│                                                                 │
-│  2. Normalize PIN                                               │
-│     normalizedPin = normalize(userPin)  // UTF-8 bytes          │
-│                                                                 │
-│  3. Derive PIN hash with SGX enclave info                       │
-│     pinHash = PinHash.svr2(                                     │
-│         normalizedPin,                                          │
-│         username,              // from auth credentials         │
-│         mrEnclave              // SGX enclave identifier        │
-│     )                                                           │
-│                                                                 │
-│  4. Encrypt MasterKey with PIN hash                             │
-│     kbsData = PinHashUtil.createNewKbsData(pinHash, masterKey)  │
-│     // Returns: kbsAccessKey, cipherText                        │
-│                                                                 │
-│  5. Send Backup Request to SVR2                                 │
-│     POST /v2/svr/backup {                                       │
-│         pin: kbsAccessKey,                                      │
-│         data: cipherText,                                       │
-│         maxTries: 10                                            │
-│     }                                                           │
-│                                                                 │
-│  6. Expose the data (make it restorable)                        │
-│     POST /v2/svr/expose { data: cipherText }                    │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                SVR2 BACKUP FLOW                                     │
+│                SecureValueRecoveryV2.Svr2PinChangeSession:182-283   │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  ENTRY: setPin(userPin, masterKey):53-55                           │
+│         Returns Svr2PinChangeSession                               │
+│                                                                    │
+│  EXECUTE SESSION (execute:198-236):                                │
+│                                                                    │
+│  STEP 1: Normalize PIN                                             │
+│  └── PinHashUtil.normalize(userPin):199                            │
+│      → normalizeToString():65-73 → UTF-8 bytes                    │
+│                                                                    │
+│  STEP 2: Get Authorization                                         │
+│  └── authorization():202 → GET /v2/svr/auth                        │
+│      Returns AuthCredentials (username, password)                  │
+│                                                                    │
+│  STEP 3: Create Backup Request (getBackupResponse:242-256)         │
+│  ├── PinHash.svr2(normalizedPin, username, mrEnclave):243         │
+│  │   → Creates PIN-derived access key                             │
+│  ├── PinHashUtil.createNewKbsData(pinHash, masterKey):244         │
+│  │   → HmacSIV.encrypt(pinHash.encryptionKey(), masterKey):47-48 │
+│  │   → Returns KbsData(kbsAccessKey, cipherText)                 │
+│  └── POST /v2/svr/backup:245-251                                   │
+│      {pin: kbsAccessKey, data: cipherText, maxTries: 10}          │
+│                                                                    │
+│  STEP 4: Expose Data (getExposeResponse:258-282)                   │
+│  └── POST /v2/svr/expose:261-265                                   │
+│      {data: cipherText}                                            │
+│      Makes data eligible for restore                               │
+│                                                                    │
+│  RESULT: BackupResponse.Success(masterKey, authorization, SVR2)   │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-### SVR2 Restore Flow
+### Flow 2.2: SVR2 Restore (Recover PIN)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    SVR2 Restore (Recover PIN)                    │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  1. User enters PIN                                             │
-│                                                                 │
-│  2. Get auth credentials from server                            │
-│     auth = GET /v2/svr/auth                                     │
-│                                                                 │
-│  3. Derive PIN access key                                       │
-│     pinHash = PinHash.svr2(normalizedPin, username, mrEnclave)  │
-│     accessKey = pinHash.accessKey()                             │
-│                                                                 │
-│  4. Send Restore Request to SVR2                                │
-│     POST /v2/svr/restore { pin: accessKey }                     │
-│                                                                 │
-│  5. Server Response:                                            │
-│     ├── OK: { data: encryptedData, tries: remaining }           │
-│     ├── PIN_MISMATCH: { tries: remaining }  // Wrong PIN        │
-│     └── MISSING: No data found                                  │
-│                                                                 │
-│  6. If OK, decrypt the MasterKey                                │
-│     masterKey = PinHashUtil.decryptSvrDataIVCipherText(         │
-│         pinHash,                                                │
-│         encryptedData                                           │
-│     ).masterKey                                                 │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                SVR2 RESTORE FLOW                                    │
+│                SecureValueRecoveryV2.restoreData():111-169          │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  STEP 1: Normalize PIN                                             │
+│  └── PinHashUtil.normalize(userPin):112                            │
+│                                                                    │
+│  STEP 2: Get Authorization                                         │
+│  └── fetchAuth():115 → GET /v2/svr/auth                            │
+│      Returns AuthCredentials                                       │
+│                                                                    │
+│  STEP 3: Derive PIN Access Key                                     │
+│  └── PinHash.svr2(normalizedPin, username, mrEnclave):121          │
+│      .accessKey() → used as authentication token                   │
+│                                                                    │
+│  STEP 4: Send Restore Request                                      │
+│  └── POST /v2/svr/restore:117-124                                  │
+│      {pin: accessKey}                                              │
+│                                                                    │
+│  STEP 5: Process Response (126-154):                               │
+│                                                                    │
+│      CASE OK:                                                      │
+│      ├── Extract ciphertext:128                                    │
+│      ├── Recreate pinHash:130                                      │
+│      ├── PinHashUtil.decryptSvrDataIVCipherText():131              │
+│      │   → HmacSIV.decrypt(pinHash.encryptionKey(), ivc):57-58   │
+│      └── Return Success(masterKey, authorization):132             │
+│                                                                    │
+│      CASE PIN_MISMATCH:                                            │
+│      └── Return PinMismatch(tries):144                             │
+│          Wrong PIN, decrement guess count                          │
+│                                                                    │
+│      CASE MISSING:                                                 │
+│      └── Return Missing:140                                        │
+│          No backup data found                                      │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-### SecureValueRecoveryV2 Implementation
+### Flow 2.3: Key Derivation from MasterKey
 
-```kotlin
-class SecureValueRecoveryV2(
-    private val serviceConfiguration: SignalServiceConfiguration,
-    private val mrEnclave: String,
-    private val authWebSocket: SignalWebSocket.AuthenticatedWebSocket
-) : SecureValueRecovery {
-
-    // Set PIN and backup MasterKey
-    override fun setPin(userPin: String, masterKey: MasterKey): PinChangeSession {
-        return Svr2PinChangeSession(userPin, masterKey)
-    }
-
-    // Restore MasterKey with PIN
-    private fun restoreData(fetchAuth: () -> AuthCredentials, userPin: String): RestoreResponse {
-        val normalizedPin = PinHashUtil.normalize(userPin)
-        val authorization = fetchAuth()
-
-        // Create restore request with PIN-derived access key
-        val pinHash = PinHash.svr2(normalizedPin, authorization.username(), Hex.fromStringCondensed(mrEnclave))
-        
-        val response = Svr2Socket(serviceConfiguration, mrEnclave).makeRequest(
-            authorization = authorization,
-            clientRequest = Request(
-                restore = RestoreRequest(
-                    pin = pinHash.accessKey().toByteString()
-                )
-            )
-        )
-
-        return when (response.restore?.status) {
-            ProtoRestoreResponse.Status.OK -> {
-                val ciphertext = response.restore.data_.toByteArray()
-                val masterKey = PinHashUtil.decryptSvrDataIVCipherText(pinHash, ciphertext).masterKey
-                RestoreResponse.Success(masterKey, authorization)
-            }
-            ProtoRestoreResponse.Status.PIN_MISMATCH -> {
-                RestoreResponse.PinMismatch(response.restore.tries)
-            }
-            ProtoRestoreResponse.Status.MISSING -> {
-                RestoreResponse.Missing
-            }
-            else -> RestoreResponse.ApplicationError(...)
-        }
-    }
-
-    inner class Svr2PinChangeSession(
-        val userPin: String,
-        val masterKey: MasterKey,
-        private var setupComplete: Boolean = false
-    ) : PinChangeSession {
-
-        override fun execute(): BackupResponse {
-            val normalizedPin = PinHashUtil.normalize(userPin)
-            val authorization = authorization()
-
-            // Step 1: Backup (creates encrypted blob, resets guess count)
-            val pinHash = PinHash.svr2(normalizedPin, authorization.username(), Hex.fromStringCondensed(mrEnclave))
-            val data = PinHashUtil.createNewKbsData(pinHash, masterKey)
-
-            val backupResponse = Svr2Socket(serviceConfiguration, mrEnclave).makeRequest(
-                authorization,
-                Request(backup = BackupRequest(
-                    pin = data.kbsAccessKey.toByteString(),
-                    data_ = data.cipherText.toByteString(),
-                    maxTries = 10
-                ))
-            )
-
-            // Step 2: Expose (make data restorable)
-            val exposeResponse = Svr2Socket(serviceConfiguration, mrEnclave).makeRequest(
-                authorization,
-                Request(expose = ExposeRequest(data_ = data.cipherText.toByteString()))
-            )
-
-            return BackupResponse.Success(masterKey, authorization, SvrVersion.SVR2)
-        }
-    }
-}
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                MASTERKEY DERIVATION                                 │
+│                MasterKey.derive():47-49                             │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  INPUT: masterKey (32 bytes)                                       │
+│                                                                    │
+│  DERIVE KEY FOR PURPOSE:                                           │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │ derive(keyName: String): ByteArray?                          │  │
+│  │                                                              │  │
+│  │ return CryptoUtil.hmacSha256(                               │  │
+│  │     masterKey,                                              │  │
+│  │     keyName.toByteArray(UTF_8)                              │  │
+│  │ )                                                           │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                    │
+│  DERIVED KEYS:                                                     │
+│  ├── deriveRegistrationLock():31-33                                │
+│  │   → HMAC-SHA256(masterKey, "Registration Lock")               │
+│  │   → Returns hex string                                        │
+│  │                                                                │
+│  ├── deriveRegistrationRecoveryPassword():35-37                   │
+│  │   → HMAC-SHA256(masterKey, "Registration Recovery")           │
+│  │   → Returns Base64 string                                     │
+│  │                                                                │
+│  ├── deriveStorageServiceKey():39-41                              │
+│  │   → HMAC-SHA256(masterKey, "Storage Service Encryption")      │
+│  │   → Returns StorageKey                                        │
+│  │                                                                │
+│  └── deriveLoggingKey():43-45                                     │
+│      → HMAC-SHA256(masterKey, "Logging Key")                      │
+│      → Returns ByteArray                                          │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Porting to Your Project
+## 3. Complete Flow Diagrams
 
-### Minimum Implementation for MasterSecret (Local Encryption)
+### Flow 3.1: App Startup with Passphrase
 
-If you only need local encrypted storage:
-
-```kotlin
-// 1. Create MasterSecret on first launch
-class KeyManager(context: Context) {
-    private val prefs = context.getSharedPreferences("secrets", Context.MODE_PRIVATE)
-    private var masterSecret: MasterSecret? = null
-
-    fun initialize(passphrase: String): MasterSecret {
-        val encryptionKey = generateAesKey(128)
-        val macKey = generateHmacKey(160)
-        
-        // Encrypt and store
-        val salt = generateSalt(16)
-        val iterations = calculateIterations(passphrase, salt)
-        val encrypted = encryptWithPbe(encryptionKey + macKey, passphrase, salt, iterations)
-        
-        prefs.edit()
-            .putString("salt", Base64.encode(salt))
-            .putInt("iterations", iterations)
-            .putString("encrypted", Base64.encode(encrypted))
-            .apply()
-            
-        masterSecret = MasterSecret(encryptionKey, macKey)
-        return masterSecret!!
-    }
-
-    fun unlock(passphrase: String): MasterSecret {
-        val salt = Base64.decode(prefs.getString("salt", "")!!)
-        val iterations = prefs.getInt("iterations", 100)
-        val encrypted = Base64.decode(prefs.getString("encrypted", "")!!)
-        
-        val decrypted = decryptWithPbe(encrypted, passphrase, salt, iterations)
-        val encryptionKey = decrypted.sliceArray(0 until 16)
-        val macKey = decrypted.sliceArray(16 until 36)
-        
-        masterSecret = MasterSecret(encryptionKey, macKey)
-        return masterSecret!!
-    }
-
-    fun encrypt(data: ByteArray): ByteArray {
-        val secret = masterSecret ?: throw IllegalStateException("Not unlocked")
-        return AesCbc.encrypt(data, secret.encryptionKey, secret.macKey)
-    }
-
-    fun decrypt(data: ByteArray): ByteArray {
-        val secret = masterSecret ?: throw IllegalStateException("Not unlocked")
-        return AesCbc.decrypt(data, secret.encryptionKey, secret.macKey)
-    }
-}
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     APP STARTUP FLOW                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. KeyCachingService.onCreate():153-165                            │
+│     └── if (passphraseDisabled && !screenLockEnabled)               │
+│         └── Auto-unlock with UNENCRYPTED_PASSPHRASE                │
+│                                                                     │
+│  2. User Enters Passphrase                                          │
+│     └── MasterSecretUtil.getMasterSecret(context, pin):106-128     │
+│         ├── verifyMac() → authenticate user                        │
+│         ├── decryptWithPassphrase() → recover keys                 │
+│         └── return MasterSecret                                    │
+│                                                                     │
+│  3. KeyCachingService.setMasterSecret():118-132                     │
+│     ├── Store in static field                                      │
+│     ├── Show lock notification                                     │
+│     └── Broadcast NEW_KEY_EVENT                                    │
+│                                                                     │
+│  4. App Components Receive Key                                      │
+│     └── Can now encrypt/decrypt database and preferences           │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Minimum Implementation for MasterKey (Cloud Backup)
+### Flow 3.2: Registration with PIN/SVR2
 
-For secure backup to your own servers:
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     REGISTRATION SVR2 FLOW                           │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. Generate MasterKey                                              │
+│     └── MasterKey.createNew(secureRandom):19-24                     │
+│         → 32 random bytes                                           │
+│                                                                     │
+│  2. User Sets PIN                                                   │
+│     └── SecureValueRecoveryV2.setPin(userPin, masterKey):53-55     │
+│         → Creates Svr2PinChangeSession                             │
+│                                                                     │
+│  3. Execute PIN Change                                              │
+│     └── session.execute():198-236                                   │
+│         ├── POST /v2/svr/backup (encrypted masterKey)              │
+│         └── POST /v2/svr/expose (make restorable)                  │
+│                                                                     │
+│  4. Store Registration Lock Locally                                 │
+│     └── masterKey.deriveRegistrationLock():31-33                    │
+│         → Used for re-registration verification                    │
+│                                                                     │
+│  5. Derive Storage Service Key                                      │
+│     └── masterKey.deriveStorageServiceKey():39-41                   │
+│         → Used for cloud backup sync                               │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-```kotlin
-// 1. MasterKey class
-class MasterKey(private val key: ByteArray) {
-    init { require(key.size == 32) { "MasterKey must be 32 bytes" } }
-    
-    fun derive(purpose: String): ByteArray {
-        return HmacSha256(key, purpose.toByteArray())
-    }
-    
-    fun serialize(): ByteArray = key.clone()
-    
-    companion object {
-        fun createNew(): MasterKey {
-            val key = ByteArray(32)
-            SecureRandom().nextBytes(key)
-            return MasterKey(key)
-        }
-    }
-}
+### Flow 3.3: Account Recovery
 
-// 2. Backup to server
-class SecureBackupClient(
-    private val apiClient: ApiClient
-) {
-    suspend fun backup(userPin: String, masterKey: MasterKey): Result<Unit> {
-        // Derive key from PIN
-        val pinHash = Argon2.hash(userPin, salt = getRandomBytes(16))
-        
-        // Encrypt master key
-        val iv = getRandomBytes(16)
-        val encryptedKey = AesGcm.encrypt(masterKey.serialize(), pinHash, iv)
-        
-        // Upload to server
-        return apiClient.uploadBackup(encryptedKey, iv)
-    }
-    
-    suspend fun restore(userPin: String): Result<MasterKey> {
-        // Download encrypted backup
-        val (encryptedKey, iv) = apiClient.downloadBackup()
-        
-        // Derive key from PIN
-        val pinHash = Argon2.hash(userPin, salt = iv)
-        
-        // Decrypt master key
-        val decrypted = AesGcm.decrypt(encryptedKey, pinHash, iv)
-        return Result.success(MasterKey(decrypted))
-    }
-}
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     ACCOUNT RECOVERY FLOW                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. User Enters PIN                                                 │
+│     └── normalize(pin):79-81                                        │
+│                                                                     │
+│  2. Request Auth Credentials                                        │
+│     └── GET /v2/svr/auth:102-105                                    │
+│         → Returns username for PIN hashing                         │
+│                                                                     │
+│  3. Derive Access Key                                               │
+│     └── PinHash.svr2(normalizedPin, username, mrEnclave)           │
+│         → Uses SGX enclave identifier                              │
+│                                                                     │
+│  4. Restore from SVR2                                               │
+│     └── POST /v2/svr/restore {pin: accessKey}                       │
+│         ├── OK: Returns encrypted masterKey                        │
+│         ├── PIN_MISMATCH: Wrong PIN, tries remaining              │
+│         └── MISSING: No backup exists                              │
+│                                                                     │
+│  5. Decrypt MasterKey                                               │
+│     └── PinHashUtil.decryptSvrDataIVCipherText():56-59             │
+│         → HmacSIV.decrypt(encryptionKey, ciphertext)               │
+│         → Returns MasterKey                                        │
+│                                                                     │
+│  6. Derive Account Keys                                             │
+│     ├── deriveRegistrationLock() → verify identity                 │
+│     └── deriveStorageServiceKey() → restore backup                │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Key Differences Summary
+## 4. Key Differences Summary
 
 | Aspect | MasterSecret | MasterKey |
 |--------|--------------|-----------|
@@ -545,6 +447,7 @@ class SecureBackupClient(
 | **Storage** | SharedPreferences (encrypted) | SVR2 server (encrypted) |
 | **Protection** | User passphrase | User PIN + Intel SGX enclave |
 | **Recovery** | Local only | Cloud-based with PIN |
+| **Key Code** | [`MasterSecret.java:42`](app/src/main/java/org/thoughtcrime/securesms/crypto/MasterSecret.java#L42) | [`MasterKey.kt:13`](core/models-jvm/src/main/java/org/signal/core/models/MasterKey.kt#L13) |
 
 ## Related Documentation
 

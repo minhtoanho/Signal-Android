@@ -43,7 +43,9 @@ This wiki follows the **C4 Model** for architectural documentation, providing vi
 | [Security & Cryptography](Security-Cryptography.md) | Security implementation details |
 | [Signal Protocol Integration Guide](Signal-Protocol-Integration-Guide.md) | **How to integrate Signal Protocol into your app** |
 | [Signal Protocol Messaging](Signal-Protocol-Messaging.md) | Session handshake, encryption, decryption, retry flows |
+| [E2EE Session Initialization](E2EE-Session-Initialization-Flow.md) | X3DH key agreement, prekey exchange, sealed sender |
 | [Signal Protocol Code Level](Signal-Protocol-Code-Level.md) | **C4 Level 4: Deep dive into classes, methods, algorithms** |
+| [Session & Sender Key Distribution](Session-And-SenderKey-Distribution-Flow.md) | **Session establishment, sender key distribution, multi-device handling, group membership changes** |
 | [Master Key Flow](Master-Key-Flow.md) | Key management: MasterSecret & MasterKey (SVR2) |
 | [Building](Building.md) | How to build the project |
 | [Testing](Testing.md) | Testing guidelines |
@@ -80,8 +82,9 @@ Signal-Android/
 
 ### For Security Researchers
 1. Read [Security & Cryptography](Security-Cryptography.md) for encryption details
-2. Review [Database](Database.md) for data handling
-3. Study the [Business Domain](Business-Domain.md) for trust boundaries
+2. Study [Session & Sender Key Distribution](Session-And-SenderKey-Distribution-Flow.md) for session/key management
+3. Review [Database](Database.md) for data handling
+4. Study the [Business Domain](Business-Domain.md) for trust boundaries
 
 ## Available Platforms
 
