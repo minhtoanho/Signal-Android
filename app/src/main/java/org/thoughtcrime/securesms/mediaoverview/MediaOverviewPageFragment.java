@@ -37,6 +37,7 @@ import org.signal.core.util.logging.Log;
 import org.signal.core.ui.logging.LoggingFragment;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.attachments.DatabaseAttachment;
+import org.thoughtcrime.securesms.components.SignalProgressDialog;
 import org.thoughtcrime.securesms.components.compose.DeleteSyncEducationDialog;
 import org.thoughtcrime.securesms.components.menu.ActionItem;
 import org.thoughtcrime.securesms.components.menu.SignalBottomActionBar;
@@ -52,9 +53,13 @@ import org.thoughtcrime.securesms.mms.PartAuthority;
 import org.signal.core.ui.permissions.Permissions;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.util.BottomOffsetDecoration;
+import org.thoughtcrime.securesms.util.CommunicationActions;
 import org.thoughtcrime.securesms.util.OffloadedMediaDialogUtil;
 import org.thoughtcrime.securesms.util.MediaUtil;
 import org.thoughtcrime.securesms.util.ViewUtil;
+
+import org.json.JSONArray;
+import org.json.JSONException;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -89,11 +94,13 @@ public final class MediaOverviewPageFragment extends LoggingFragment
   private       GridMode                      gridMode;
   private       VoiceNoteMediaController      voiceNoteMediaController;
   private       SignalBottomActionBar         bottomActionBar;
+  private       SignalProgressDialog          selectAllProgress;
   private       LifecycleDisposable           lifecycleDisposable;
   private       boolean                       pendingLoad = true;
   private       int                           loadLimit;
   private       boolean                       allLoaded;
   private       boolean                       loadingMore;
+  private       boolean                       pendingSelectAll;
 
   public static @NonNull Fragment newInstance(long threadId,
                                               @NonNull MediaLoader.MediaType mediaType,
@@ -248,9 +255,19 @@ public final class MediaOverviewPageFragment extends LoggingFragment
         totalMediaItems += groupedThreadMedia.getSectionItemCount(i);
       }
       allLoaded = totalMediaItems < loadLimit;
+    } else {
+      allLoaded = true;
     }
 
     loadingMore = false;
+
+    if (pendingSelectAll) {
+      pendingSelectAll = false;
+      dismissSelectAllProgress();
+      getListAdapter().selectAllMedia();
+      updateMultiSelect();
+    }
+
     noMedia.setVisibility(recyclerView.getAdapter().getItemCount() > 0 ? View.GONE : View.VISIBLE);
     getActivity().invalidateOptionsMenu();
   }
@@ -292,12 +309,20 @@ public final class MediaOverviewPageFragment extends LoggingFragment
   }
 
   private void handleMediaPreviewClick(@NonNull View view, @NonNull MediaTable.MediaRecord mediaRecord) {
-    if (mediaRecord.getAttachment().getDisplayUri() == null) {
+    Context context = getContext();
+    if (context == null) {
       return;
     }
 
-    Context context = getContext();
-    if (context == null) {
+    if (mediaRecord.getLinkPreviewJson() != null) {
+      String url = parseLinkUrl(mediaRecord.getLinkPreviewJson());
+      if (url != null && !url.isEmpty()) {
+        CommunicationActions.openBrowserLink(context, url);
+      }
+      return;
+    }
+
+    if (mediaRecord.getAttachment() == null || mediaRecord.getAttachment().getDisplayUri() == null) {
       return;
     }
 
@@ -354,6 +379,18 @@ public final class MediaOverviewPageFragment extends LoggingFragment
       }
     }
 
+  private static @Nullable String parseLinkUrl(@NonNull String linkPreviewJson) {
+    try {
+      JSONArray json = new JSONArray(linkPreviewJson);
+      if (json.length() > 0) {
+        return json.getJSONObject(0).optString("url", "");
+      }
+    } catch (JSONException e) {
+      // ignore
+    }
+    return null;
+  }
+
   @Override
   public void onMediaLongClicked(MediaTable.MediaRecord mediaRecord) {
     if (actionMode == null) {
@@ -377,8 +414,15 @@ public final class MediaOverviewPageFragment extends LoggingFragment
   }
 
   private void handleSelectAllMedia() {
-    getListAdapter().selectAllMedia();
-    updateMultiSelect();
+    if (allLoaded) {
+      getListAdapter().selectAllMedia();
+      updateMultiSelect();
+    } else {
+      pendingSelectAll = true;
+      selectAllProgress = SignalProgressDialog.show(requireContext(), null, null, true);
+      loadLimit = 0;
+      LoaderManager.getInstance(this).restartLoader(0, null, this);
+    }
   }
 
   private String getActionModeTitle() {
@@ -404,9 +448,18 @@ public final class MediaOverviewPageFragment extends LoggingFragment
     updateMultiSelect();
   }
 
+  private void dismissSelectAllProgress() {
+    if (selectAllProgress != null && selectAllProgress.isShowing()) {
+      selectAllProgress.dismiss();
+    }
+    selectAllProgress = null;
+  }
+
   private void exitMultiSelect() {
     actionMode.finish();
     actionMode = null;
+    pendingSelectAll = false;
+    dismissSelectAllProgress();
     ViewUtil.animateOut(bottomActionBar, bottomActionBar.getExitAnimation());
   }
 

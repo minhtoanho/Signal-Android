@@ -29,7 +29,7 @@ import org.thoughtcrime.securesms.backup.v2.local.LocalArchiver
 import org.thoughtcrime.securesms.backup.v2.local.SnapshotFileSystem
 import org.thoughtcrime.securesms.database.model.databaseprotos.RestoreDecisionState
 import org.thoughtcrime.securesms.dependencies.AppDependencies
-import org.thoughtcrime.securesms.jobs.RestoreLocalAttachmentJob
+import org.thoughtcrime.securesms.jobs.LocalBackupRestoreMediaJob
 import org.thoughtcrime.securesms.keyvalue.Completed
 import org.thoughtcrime.securesms.keyvalue.SignalStore
 import org.thoughtcrime.securesms.recipients.Recipient
@@ -124,8 +124,7 @@ class RestoreLocalBackupActivityViewModel : ViewModel() {
 
       if (result is Result.Success) {
         Log.i(TAG, "Local backup import succeeded")
-        val mediaNameToFileInfo = archiveFileSystem.filesFileSystem.allFiles()
-        RestoreLocalAttachmentJob.enqueueRestoreLocalAttachmentsJobs(mediaNameToFileInfo)
+        AppDependencies.jobManager.add(LocalBackupRestoreMediaJob.create(Uri.parse(backupDirectory)))
 
         val actualBackupId = LocalArchiver.getBackupId(snapshotFileSystem, messageBackupKey)
         val expectedBackupId = SignalStore.account.accountEntropyPool
@@ -147,11 +146,13 @@ class RestoreLocalBackupActivityViewModel : ViewModel() {
         StorageServiceRestore.restore()
         RegistrationUtil.maybeMarkRegistrationComplete()
 
+        val canReenableBackups = backupIdMatchesCurrentAccount && !archiveFileSystem.isRootedAtSignalBackups
+
         internalState.update {
           it.copy(
             restorePhase = RestorePhase.COMPLETE,
-            backupDirectory = if (backupIdMatchesCurrentAccount) backupDirectory else null,
-            dialog = if (backupIdMatchesCurrentAccount) RestoreLocalBackupActivityDialog.CONFIRM_BACKUP_LOCATION
+            backupDirectory = if (canReenableBackups) backupDirectory else null,
+            dialog = if (canReenableBackups) RestoreLocalBackupActivityDialog.CONFIRM_BACKUP_LOCATION
             else RestoreLocalBackupActivityDialog.LOCAL_BACKUPS_DISABLED
           )
         }
