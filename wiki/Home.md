@@ -46,6 +46,7 @@ This wiki follows the **C4 Model** for architectural documentation, providing vi
 | [E2EE Session Initialization](E2EE-Session-Initialization-Flow.md) | X3DH key agreement, prekey exchange, sealed sender |
 | [Signal Protocol Code Level](Signal-Protocol-Code-Level.md) | **C4 Level 4: Deep dive into classes, methods, algorithms** |
 | [Session & Sender Key Distribution](Session-And-SenderKey-Distribution-Flow.md) | **Session establishment, sender key distribution, multi-device handling, group membership changes** |
+| [Message Rendering UX Flow](Message-Rendering-UX-Flow.md) | **Conversation UI, large conversations, real-time message handling, scroll position management, edge cases** |
 | [Master Key Flow](Master-Key-Flow.md) | Key management: MasterSecret & MasterKey (SVR2) |
 | [Building](Building.md) | How to build the project |
 | [Testing](Testing.md) | Testing guidelines |
